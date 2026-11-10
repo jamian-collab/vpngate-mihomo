@@ -1,0 +1,54 @@
+name: Update VPN Gate Mihomo
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '13 */2 * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: vpngate-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Fetch all compatible VPN Gate nodes
+        run: |
+          mkdir -p site
+          python vpngate_to_mihomo.py --country ALL --proto all --limit 0 --timeout 45 --output site/vpngate.yaml
+      - name: Validate generated subscription
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          p = Path('site/vpngate.yaml')
+          cfg = yaml.safe_load(p.read_text(encoding='utf-8'))
+          assert cfg.get('proxies'), 'No compatible nodes found'
+          assert cfg.get('proxy-groups'), 'Missing proxy groups'
+          assert cfg.get('rules'), 'Missing rules'
+          print(f"Nodes: {len(cfg['proxies'])}; groups: {len(cfg['proxy-groups'])}; rules: {len(cfg['rules'])}")
+          PY
+          touch site/.nojekyll
+          printf '%s\n' '<!doctype html><meta charset="utf-8"><title>VPN Gate Mihomo</title><a href="vpngate.yaml">Mihomo subscription</a>' > site/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
